@@ -1,0 +1,206 @@
+#!/usr/bin/perl
+
+# Author : Sabuj Pattanayek <sabujp@gmail.com>
+# Purpose : See usage()
+# Version : git
+
+use Getopt::Long;
+use strict;
+use diagnostics;
+use POSIX;
+use File::Find;
+use File::stat;
+
+my (@files, $size, $mediaSize, $minMediaSize, $numFileLists, $listName, $listFH, $listSize);
+my (%fileH, @fileList, $tarScript, $tapeDevice, $blockingFactor);
+
+$minMediaSize = 700*1024**2;
+$numFileLists = 0;
+$listName = "";
+$tapeDevice = "";
+$blockingFactor = 0;
+
+my $result = GetOptions ("files=s{,}" => \@files,
+					"listname=s" => \$listName,
+					"tarscript" => \$tarScript,
+					"totape=s" => \$tapeDevice,
+					"blockingfactor=i" => \$blockingFactor,
+					"size=s" => \$size);
+
+if ("$listName" eq "") {
+	usage();
+}
+
+if ($size =~ /(^[0-9]*\.?[0-9]+)(m|g|t)/) {
+	my $sizeShort = $1;
+	my $sizeSuffix = $2;
+	$sizeSuffix = lc($sizeSuffix);
+	if ($sizeSuffix eq 'm') {
+		$mediaSize = $sizeShort * 1024**2;
+	}
+	elsif ($sizeSuffix eq 'g') {
+		$mediaSize = $sizeShort * 1024**3;
+	}	
+	elsif ($sizeSuffix eq 't') {
+		$mediaSize = $sizeShort * 1024**4;
+	}	
+	else {
+		print "Syntax error specifying the media size\n";
+		usage()
+	}
+	$mediaSize = floor($mediaSize);
+	if ($mediaSize < $minMediaSize) {
+		print "Media size smaller than the minimum\n";
+		usage();
+	}
+}
+else {
+	print "You didn't specify a media size properly\n";
+	usage();
+}
+
+if (@files) {
+	find(\&buildFilesHash, @files);
+	generateFileLists();
+}
+else {
+	print "You didn't specify any files\n";
+	usage();
+}
+
+sub generateFileLists {
+	my ($fileName, $numTried, $sizeFH, $sizeFN, @filesTooBig, $tooBigFN, $tooBigFH);
+	my ($tarScriptFN, $tarScriptFH, $tarFN, $listFN);
+	my $firstList = 1;
+
+	$listSize = 0;	
+	$numTried = 0;
+	while(@fileList) {
+		$fileName = shift(@fileList);
+		if ($listSize == 0) {
+			createNewFileList();
+			$tarFN = $listName . "_" . $numFileLists . ".tar";
+			$listFN = $listName . "_" . $numFileLists . ".lst";
+		}
+		# will the current file fit onto the media?
+		#print "$fileName , $fileH{$fileName} , $listSize\n";
+		if (($fileH{$fileName} + $listSize) <= $mediaSize) {
+			print $listFH "$fileName\n";
+			$listSize += $fileH{$fileName};
+			#print "$fileName , $fileH{$fileName} , $listSize\n";
+		}
+		else {
+			# will the file never fit onto the media?
+			if ($fileH{$fileName} >= $mediaSize) {
+				push(@filesTooBig, $fileName);
+				next;
+			}
+			# push the fileName to the end of the list so we don't try it again
+			#print "$fileName won't fit\n";
+			push(@fileList, $fileName);
+			$numTried++;
+		}
+		# if we've already checked the remaining files in @fileList and they won't fit
+		# in the media, create a new fileList
+		if ($numTried >= @fileList) {
+			close($listFH);
+			$sizeFN = $listName . "_" . $numFileLists . ".sz";
+			die "Couldn't open $sizeFN for writing\n" unless open($sizeFH, ">$sizeFN");
+			print $sizeFH "$listSize\n";
+			close($sizeFH);
+			$listSize = 0;
+			$numTried = 0;
+			if ($firstList && $tarScript) {
+				$tarScriptFN = $listName . "_tar.sh";
+				die "Coudln't open $tarScriptFN for writing\n" unless open($tarScriptFH, ">$tarScriptFN");
+				$firstList = 0;
+				print $tarScriptFH "#!/bin/sh\n\n";
+				if ($tapeDevice ne "") {
+					print $tarScriptFH "mt -f $tapeDevice compression 1\n";
+					print $tarScriptFH "echo \"Enter the tape so I can rewind it\"\n";
+					print $tarScriptFH "read unused\n";
+					print $tarScriptFH "mt -f $tapeDevice rewind\n";
+					$listFN = $listName . "_" . $numFileLists . ".lst";
+					if ($blockingFactor != 0) {
+						print $tarScriptFH "tar -b $blockingFactor -cvWf $tapeDevice -T $listFN --no-recursion\n\n";
+					}
+					else {
+						print $tarScriptFH "tar -cvWf $tapeDevice -T $listFN --no-recursion\n\n";
+					}
+				}
+				else {	
+					print $tarScriptFH "tar -cvf $tarFN -T $listFN --no-recursion\n";
+				}
+					
+			}
+			elsif ($tarScript) {
+				if ($tapeDevice ne "") {
+					print $tarScriptFH "echo \"Enter the tape so I can rewind it\"\n";
+					print $tarScriptFH "read unused\n";
+					print $tarScriptFH "mt -f $tapeDevice rewind\n";
+					if ($blockingFactor != 0) {
+						print $tarScriptFH "tar -b $blockingFactor -cvWf $tapeDevice -T $listFN --no-recursion\n\n";
+					}
+					else {
+						print $tarScriptFH "tar -cvWf $tapeDevice -T $listFN --no-recursion\n\n";
+					}
+				}
+				else {
+					print $tarScriptFH "tar -cvf $tarFN -T $listFN --no-recursion\n";
+				}
+			}
+		}
+	}
+
+	if (@filesTooBig) {
+		$tooBigFN = $listName . "_tooBig" . ".lst";
+		die "Couldn't open $tooBigFN for writing\n" unless open($tooBigFH, ">$tooBigFN");
+		foreach my $tooBig (@filesTooBig) {
+			print $tooBigFH "$tooBig\n";
+		}
+		close($tooBigFH);
+	}
+	
+	if (($numFileLists > 0) && ($tarScript)) {
+		close($tarScriptFH);
+		chmod 0755, $tarScriptFN;
+	}
+}
+
+sub buildFilesHash {
+	my ($stats, $fileName);
+	$fileName = $_;
+	# File::Find does a chdir() by default so this won't work
+	#if ($stats = lstat($File::Find::name)) {
+	if ($stats = lstat($fileName)) {
+		push(@fileList, $File::Find::name);
+		# dirs take up ~0 bytes in tars, but for our list generating algorithm, we make
+		# them the size of the dirname
+		if (-d $fileName) {
+			$fileH{$File::Find::name} = length($fileName);
+		}
+		else {
+			$fileH{$File::Find::name} = $stats->size;
+		}
+	}
+	else {
+		print "$File::Find::name : $!\n";
+	}
+}
+
+sub createNewFileList {
+	$numFileLists++;		
+	my $listFN = $listName . "_" . $numFileLists . ".lst";
+	die "Couldn't open $listFN for writing\n" unless open($listFH, ">$listFN");
+}
+
+sub usage {
+	print "Creates a file list that can be passed to tar -T\n\n";
+	print "-f, --files <file1> <file2> <dir1> <dir2> ... : name of files and directories to traverse\n";
+	print "-s, --size <size> : size of media to fill with a " . $minMediaSize/(1024**2) ." mb minimum (e.g. 700m, 4.3g, 1.5t, 3t)\n";
+	print "-l, --listname <baseListName> : the base name of the file lists, each list of files will be created as <baseListName>_#.lst, a size file that gives the total size in bytes of the files in the list will be created as <baseListName>_#.sz, and a list of files that won't ever fit on the media will be created in the file <baseListName>_tooBig.lst\n";
+	print "--tarscript (optional) : generate tar script that uses the lst files with tar -T, script will have the name <baseListName>_tar.sh and the names of the tar files in the script will have the names <baseListName>_#.tar unless you use the --totape option\n";
+	print "--totape <tapeDevice> (optional) : when used with --tarscript, will tar to <tapeDevice>. Before each tar command, the script will ask you if you've got a tape in the drive, rewind the tape, and then begin the tar.\n";
+	print "-b, --blockingfactor <integer> (optional) : blocking factor to pass to tar. Can be used if --tarscript and --totape is specified.\n\n";
+	exit(-1);
+}
