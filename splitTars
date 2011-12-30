@@ -117,36 +117,41 @@ sub generateFileLists {
 				print $tarScriptFH "#!/bin/sh\n\n";
 				if ($tapeDevice ne "") {
 					print $tarScriptFH "mt -f $tapeDevice compression 1\n";
-					print $tarScriptFH "echo \"Enter the tape so I can rewind it\"\n";
+					print $tarScriptFH "echo \"Enter tape $numFileLists so I can rewind it\"\n";
 					print $tarScriptFH "read unused\n";
 					print $tarScriptFH "mt -f $tapeDevice rewind\n";
 					$listFN = $listName . "_" . $numFileLists . ".lst";
 					if ($blockingFactor != 0) {
-						print $tarScriptFH "tar -b $blockingFactor -cvWf $tapeDevice -T $listFN --no-recursion\n\n";
+						print $tarScriptFH "tar -b $blockingFactor -cvWf $tapeDevice -T $listFN --no-recursion\n";
 					}
 					else {
-						print $tarScriptFH "tar -cvWf $tapeDevice -T $listFN --no-recursion\n\n";
+						print $tarScriptFH "tar -cvWf $tapeDevice -T $listFN --no-recursion\n";
 					}
+					print $tarScriptFH "mt -f $tapeDevice rewind\n";
+					print $tarScriptFH "mt -f $tapeDevice eject\n\n";
+
 				}
 				else {	
-					print $tarScriptFH "tar -cvf $tarFN -T $listFN --no-recursion\n";
+					print $tarScriptFH "tar -cvWf $tarFN -T $listFN --no-recursion\n";
 				}
 					
 			}
 			elsif ($tarScript) {
 				if ($tapeDevice ne "") {
-					print $tarScriptFH "echo \"Enter the tape so I can rewind it\"\n";
+					print $tarScriptFH "echo \"Enter tape $numFileLists so I can rewind it\"\n";
 					print $tarScriptFH "read unused\n";
 					print $tarScriptFH "mt -f $tapeDevice rewind\n";
 					if ($blockingFactor != 0) {
-						print $tarScriptFH "tar -b $blockingFactor -cvWf $tapeDevice -T $listFN --no-recursion\n\n";
+						print $tarScriptFH "tar -b $blockingFactor -cvWf $tapeDevice -T $listFN --no-recursion\n";
 					}
 					else {
-						print $tarScriptFH "tar -cvWf $tapeDevice -T $listFN --no-recursion\n\n";
+						print $tarScriptFH "tar -cvWf $tapeDevice -T $listFN --no-recursion\n";
 					}
+					print $tarScriptFH "mt -f $tapeDevice rewind\n";
+					print $tarScriptFH "mt -f $tapeDevice eject\n\n";
 				}
 				else {
-					print $tarScriptFH "tar -cvf $tarFN -T $listFN --no-recursion\n";
+					print $tarScriptFH "tar -cvWf $tarFN -T $listFN --no-recursion\n";
 				}
 			}
 		}
